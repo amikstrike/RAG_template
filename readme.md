@@ -1,10 +1,15 @@
 # Candidates Review Application
 
 A Streamlit-based application for reviewing and analyzing candidate documents using AI-powered document processing and retrieval.
-![Ingestion](/screenshots/Candidate_ingestion.png)
-![Summary](/screenshots/Candidate_summary.png)
-![RAG](/screenshots/RAG_chat.png)
-![ReAct](/screenshots/ReAct_Agent.png)
+
+# Data Ingestion
+![Ingestion](screenshots/Candidate_ingestion.png)
+# LLM Summary
+![Summary](screenshots/Candidate_summary.png)
+# RAG chat
+![RAG](screenshots/RAG_chat.png)
+# ReAct Agent with tools
+![ReAct](screenshots/ReAct_Agent.png)
 
 ## Features
 
