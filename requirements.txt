@@ -1,0 +1,8 @@
+streamlit
+pypdf
+llama-index>=0.10.0
+llama-index-llms-ollama
+llama-index-llms-gemini
+llama-index-embeddings-ollama
+llama-index-vector-stores-chroma
+chromadb
