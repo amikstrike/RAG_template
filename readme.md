@@ -9,7 +9,7 @@ A Streamlit-based application for reviewing and analyzing candidate documents us
 # RAG chat
 ![RAG](screenshots/RAG_chat.png)
 # ReAct Agent with tools
-![ReAct](screenshots/ReAct_Agent.png)
+![ReAct](screenshots/ReAct_agent.png)
 
 ## Features
 
