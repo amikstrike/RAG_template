@@ -6,26 +6,47 @@ from llama_index.core.workflow import Context
 from llama_index.core.tools import FunctionTool
 from llama_index.core.agent.workflow import AgentWorkflow  # orchestrator
 
+from typing import List
+from pydantic import BaseModel, Field
+from llama_index.core.tools import FunctionTool
 
-def search_Web(query: str) -> str:
-    """Search web for additional information and returns the result"""
-    return f"Web result 165333 for: {query}"
+# Define structured outputs
+class WebSearchResult(BaseModel):
+    query: str = Field(..., description="Search query string")
+    results: List[str] = Field(..., description="List of results from the web")
 
-def search_KnowledgeBase(query: str) -> str:
-    """Search knowledge base for additional information and returns the result"""
-    return f"Knowledge Base result 4444 for: {query}"
+
+class KBSearchResult(BaseModel):
+    query: str = Field(..., description="Knowledge base query string")
+    answer: str = Field(..., description="Answer from ChromaDB knowledge base")
+
+
+# Functions with structured return
+def search_web(query: str) -> WebSearchResult:
+    return WebSearchResult(
+        query=query,
+        results=[f"Result: 1"]
+    )
+
+
+def search_knowledgebase(query: str) -> KBSearchResult:
+    return KBSearchResult(
+        query=query,
+        answer=f"Result: 2"
+    )
+
 
 async def run_agent(query: str) -> str:
     ensure_llamaindex_agent_settings()
-    web_tool = FunctionTool.from_defaults(fn=search_Web)
-    kb_tool  = FunctionTool.from_defaults(fn=search_KnowledgeBase)
+    web_tool = FunctionTool.from_defaults(fn=search_web)
+    kb_tool  = FunctionTool.from_defaults(fn=search_knowledgebase)
     wf = AgentWorkflow.from_tools_or_functions([web_tool, kb_tool])
     result = await wf.run(query)
     return str(result)  
 
 async def run_agent_sync(query: str) -> str:
     ensure_llamaindex_agent_settings()
-    agent = ReActAgent(tools=[search_Web, search_KnowledgeBase], llm=Settings.llm)
+    agent = ReActAgent(tools=[search_web, search_knowledgebase], llm=Settings.llm)
 
     # Create a context to store the conversation history/session state
     ctx = Context(agent)

@@ -8,11 +8,11 @@ CHROMA_DIR = os.path.join(DATA_DIR, "chroma")
 TEXT_DIR = os.path.join(DATA_DIR, "text")
 DB_PATH = os.path.join(DATA_DIR, "candidates.db")
 COLLECTION_NAME = "cvs"
+PERSIST_DIR = os.path.join(DATA_DIR, "storage")
 
-os.makedirs(DATA_DIR, exist_ok=True)
-os.makedirs(TEXT_DIR, exist_ok=True)
 
 def log(msg: str):
     print(f"[{datetime.utcnow().isoformat()}] {msg}")
+    
     
     

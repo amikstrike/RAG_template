@@ -35,6 +35,8 @@ from extraction import *
 from tools import *
 
 
+def st_log(msg: str):
+    st.write(f"[{datetime.utcnow().isoformat()}] {msg}")
 # ---------- Streamlit UI ----------
 
 def ui_header():
@@ -75,12 +77,16 @@ def render_manage_tab():
                     # Save file to disk for traceability (optional)
                     save_dir = os.path.join(DATA_DIR, "pdfs")
                     os.makedirs(save_dir, exist_ok=True)
+                    log(f"Saving uploaded PDF to {save_dir}")
                     dest_path = os.path.join(save_dir, f"{uuid.uuid4().hex}_{f.name}")
                     with open(dest_path, "wb") as out:
                         out.write(file_bytes)
+                    log(f"Saved PDF to {dest_path}")
 
                     candidate_id = add_or_update_candidate(None, name, profession, years, dest_path, notes)
+                    log(f"Added candidate {candidate_id} to DB")
                     write_text_cache(candidate_id, raw_text)
+                    log(f"Wrote text cache for candidate {candidate_id}")
                     ingest_candidate_text(candidate_id, raw_text, {
                         "name": name,
                         "profession": profession,
@@ -243,7 +249,7 @@ def render_chat_tab():
         log(f"User question for candidate {selected['id']}: {q}")
         st.session_state[sid].append(("user", q))
         with st.spinner("Thinking…"):
-            ans, sources = rag_answer(selected["id"], q)
+            ans, sources = rag_answer(selected["id"], q, 3)
         st.session_state[sid].append(("assistant", ans))
         # Show sources
         with st.expander("Sources"):
@@ -251,7 +257,7 @@ def render_chat_tab():
                 st.write("(no source previews)")
             else:
                 for i, s in enumerate(sources, 1):
-                    st.markdown(f"**{i}. score:** {s['score']}")
+                    #st.markdown(f"**{i}. score:** {s['score']}")
                     md = s.get("metadata", {})
                     st.json(md)
                     st.code(s.get("text_preview", ""))
@@ -261,11 +267,26 @@ def render_chat_tab():
 # ---------- Main ----------
 
 def main():
+        
+    os.makedirs(DATA_DIR, exist_ok=True)
+    os.makedirs(TEXT_DIR, exist_ok=True)
+    os.makedirs(PERSIST_DIR, exist_ok=True)
     ui_header()
     init_db()
+    
 
+    #button sidebar clean session
+    if st.button("Clear session"):
+        st.session_state.clear()
+        # DELETE DATA FOLDER
+        if os.path.exists(DATA_DIR):
+            import shutil
+            shutil.rmtree(DATA_DIR)
+        #refresh page
+        st.rerun()
+        st.success("Session cleared.")
     # Tabs
-    t1, t2, t3, t4 = st.tabs(["📂 Manage CVs", "👤 Candidate", "💬 Chat", "🤖 Agent"])
+    t1, t2, t3, t4, t5 = st.tabs(["📂 Manage CVs", "👤 Candidate", "💬 Chat", "🤖 Agent","Genai"])
     with t1:
         render_manage_tab()
     with t2:
@@ -275,6 +296,24 @@ def main():
         render_chat_tab()
     with t4:
         render_ReAct_tab()
+    with t5:
+        tests()
+    
+
+def tests():
+    #button to list models
+    if st.button("List available models from GenAI Engine"):
+        ensure_gen_engine_openai()
+        # 2. Sanity check: test embedding model directly
+        try:
+            test_text = "embedding model test"
+            test_embedding = Settings.embed_model.get_text_embedding(test_text)
+            if not test_embedding or not isinstance(test_embedding, list):
+                raise ValueError("Embedding model did not return a valid vector.")
+            st_log(f"Embedding model check passed. Vector length = {len(test_embedding)}, sample: {test_embedding[:5]}...")
+        except Exception as e:
+            raise RuntimeError(f"Embedding model test failed: {e}")
+
 
 
 if __name__ == "__main__":

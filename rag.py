@@ -13,10 +13,6 @@ from llama_index.core import (
 from llama_index.core.node_parser import SentenceSplitter
 from llama_index.core.vector_stores import MetadataFilters, ExactMatchFilter
 
-# Ollama-backed LLM & Embeddings
-from llama_index.llms.ollama import Ollama
-from llama_index.embeddings.ollama import OllamaEmbedding
-
 # Chroma vector store
 import chromadb
 from llama_index.vector_stores.chroma import ChromaVectorStore
@@ -24,6 +20,8 @@ from common import *
 from init_llm import *
 from db import *
 
+from typing import List, Optional
+from structures import CandidateSummary
 
 # ---------- Ingestion & Reindex ----------
 
@@ -40,49 +38,122 @@ def read_text_cache(candidate_id: str) -> Optional[str]:
             return f.read()
     return None
 
+from llama_index.core.node_parser import SimpleNodeParser
 
 def ingest_candidate_text(candidate_id: str, text: str, metadata: Dict[str, Any]):
     ensure_llamaindex_settings()
-    # Create a Document with metadata filterable by candidate_id
-    doc = Document(
-        text=text,
-        metadata={
-            "candidate_id": candidate_id,
-            "name": metadata.get("name") or "",
-            "profession": metadata.get("profession") or "",
-            "years_experience": metadata.get("years_experience") if metadata.get("years_experience") is not None else "",
-        },
-        doc_id=f"cv::{candidate_id}::{uuid.uuid4().hex}",  # unique chunk-batch id to support reindex
-    )
+    os.makedirs(PERSIST_DIR, exist_ok=True)
+
+    parser = SentenceSplitter(chunk_size=1000, chunk_overlap=100)
+    nodes = parser.get_nodes_from_documents([
+        Document(
+            text=text,
+            metadata={
+                "candidate_id": candidate_id,
+                "name": metadata.get("name") or "",
+                "profession": metadata.get("profession") or "",
+                "years_experience": metadata.get("years_experience") or "",
+            },
+            doc_id=f"cv::{candidate_id}::{uuid.uuid4().hex}",
+        )
+    ])
+
     collection = get_chroma_collection()
     vector_store = ChromaVectorStore(chroma_collection=collection)
-    storage_context = StorageContext.from_defaults(vector_store=vector_store)
-    # Add to vector store (this call will upsert nodes)
-    VectorStoreIndex.from_documents([doc], storage_context=storage_context, show_progress=True)
 
+    storage_context = StorageContext.from_defaults(
+        vector_store=vector_store
+    )
 
+    index = VectorStoreIndex(
+        nodes,
+        storage_context=storage_context,
+        embed_model=Settings.embed_model,
+        show_progress=True,
+        insert_batch_size=1,
+    )
+    
+    return index
 
 # ---------- Retrieval & QA ----------
-def summarize_candidate(candidate_id: str, name: str) -> str:
-    qe = get_query_engine_for_candidate(candidate_id, k=6)
-    prompt = (
-        "You are summarizing a candidate CV for a recruiter. "
-        "Summarize in 6-10 bullet points: core skills, seniority, domains, notable projects, leadership, tools, and education. "
-        "Use concise, recruiter-friendly wording."
-    )
+
+
+from typing import cast
+
+from llama_index.core.output_parsers import PydanticOutputParser
+from llama_index.llms.openai import OpenAI
+
+# your CandidateSummary schema (Pydantic)
+from structures import CandidateSummary
+
+from typing import Any
+from llama_index.core import VectorStoreIndex
+from llama_index.core.vector_stores import MetadataFilters, ExactMatchFilter
+from llama_index.llms.openai import OpenAI
+
+def get_query_engine_for_candidate(candidate_id: str, k: int = 6):
+    ensure_llamaindex_settings()
+    index: VectorStoreIndex = get_vector_store_index()
+    
+    collection = get_chroma_collection()
+    log(f"[DEBUG] Chroma collection count: {collection.count()}")
+    # Build filters
+    filters = MetadataFilters(filters=[ExactMatchFilter(key="candidate_id", value=candidate_id)])
+
+    # Debug: log filter
+    log(f"[DEBUG] Using filter: key='candidate_id', value='{candidate_id}' (type={type(candidate_id)})")
+
+    # Debug: check if any docs exist with that metadata
     try:
-        resp = qe.query(f"{prompt}\n\nCandidate: {name}. Provide a concise, objective summary.")
-        return str(resp)
+        docs = index.docstore.docs
+        sample_docs = list(docs.values())[:3]
+        log(f"[DEBUG] Total docs in index: {len(docs)}")
+        for d in sample_docs:
+            log(f"[DEBUG] Sample doc metadata: {d.metadata}")
+    except Exception as e:
+        log(f"[DEBUG] Could not inspect docstore: {e}")
+
+    # Create structured LLM
+    llm = Settings.llm.as_structured_llm(output_cls=CandidateSummary)
+
+    # Try query engine with and without filters
+    try:
+        qe = index.as_query_engine(
+            similarity_top_k=k,
+            filters=filters,
+            llm=llm,
+        )
+        log("[DEBUG] Query engine created successfully with filters.")
+        return qe
+    except Exception as e:
+        log(f"[DEBUG] Failed to create query engine with filters: {e}")
+
+        # fallback without filters
+        qe = index.as_query_engine(
+            similarity_top_k=k,
+            llm=llm,
+        )
+        log("[DEBUG] Query engine created successfully WITHOUT filters.")
+        return qe
+
+
+def summarize_candidate(candidate_id: str, name: str) -> CandidateSummary | str:
+    qe = get_query_engine_for_candidate(candidate_id, k=6)
+
+    prompt = (
+        "You are summarizing a candidate CV for a recruiter.\n"
+        "Return the result that fits the CandidateSummary schema. "
+        "If something is unknown, leave list empty or field null.\n"
+        f"Candidate: {name}"
+    )
+
+    try:
+        response = qe.query(prompt)
+        log(f"[DEBUG] Raw response: {response}")
+        return str(response)
     except Exception as e:
         return f"Summary unavailable: {e}"
 
-
-
-def get_query_engine_for_candidate(candidate_id: str, k: int = 5):
-    ensure_llamaindex_settings()
-    index = get_vector_store_index()
-    filters = MetadataFilters(filters=[ExactMatchFilter(key="candidate_id", value=candidate_id)])
-    return index.as_query_engine(similarity_top_k=k, filters=filters)
 
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 
@@ -109,48 +180,11 @@ def retrieve_vector_data(candidate_id: str, question: str, k: int = 5) -> List[A
     
     log(f"[ret] retrieving for candidate {candidate_id} question='{question}'")
     nodes = retriever.retrieve(question)
+    log(f"[ret] retrieved {len(nodes)} nodes")
     
     return nodes
 
 
-def process_retrieved_nodes(nodes: List[Any], candidate_id: str, k: int = 5) -> List[Dict[str, Any]]:
-    """
-    Process retrieved nodes and extract relevant information into a structured format.
-    
-    Args:
-        nodes: List of retrieved nodes from vector store
-        candidate_id: The candidate identifier for logging
-        
-    Returns:
-        List of processed source dictionaries
-    """
-    sources: List[Dict[str, Any]] = []
-    
-    for s in nodes:
-        node = getattr(s, "node", s)
-        meta = getattr(node, "metadata", getattr(s, "metadata", {})) or {}
-        
-        # Safe text extraction
-        try:
-            text = node.get_content() if hasattr(node, "get_content") else getattr(node, "text", "") or ""
-        except Exception:
-            text = getattr(node, "text", "") or ""
-        
-        item = {
-            "score": getattr(s, "score", None),
-            "node_id": getattr(node, "node_id", getattr(s, "id_", None)),
-            "metadata": meta,
-            "text": text,
-            "text_preview": text[:200].replace("\n", " "),
-        }
-        sources.append(item)
-        
-        # Log retrieved item details
-        log(f"[ret] cand={candidate_id} score={item['score']} id={item['node_id']} "
-            f"meta={meta} "
-            f"prev='{item['text'][:500]}...'")
-    
-    return sources
 
 
 def build_context_prompt(question: str, sources: List[Dict[str, Any]]) -> str:
@@ -185,78 +219,6 @@ Answer:"""
     return prompt
 
 
-def generate_llm_answer_with_context(candidate_id: str, context_prompt: str, timeout_s: int = 20) -> str:
-    """
-    Generate an LLM answer using the context-augmented prompt with timeout protection.
-    
-    Args:
-        candidate_id: The candidate identifier
-        context_prompt: The question augmented with retrieved context
-        timeout_s: Timeout in seconds for generation
-        
-    Returns:
-        Generated answer string, or fallback message if generation fails
-    """
-    answer = "[retrieval-only]"
-    
-    try:
-        # Use a basic LLM instead of query engine to ensure we control the context
-        llm = Settings.llm
-        
-        with ThreadPoolExecutor(max_workers=1) as ex:
-            fut = ex.submit(llm.complete, context_prompt)
-            resp = fut.result(timeout=timeout_s)
-        answer = str(resp)
-    except FuturesTimeout:
-        log(f"LLM generation timed out after {timeout_s}s; returning retrieval-only.")
-    except Exception as e:
-        log(f"LLM generation failed: {e}")
-    
-    return answer
-
-
-# Alternative implementation if you want to use query engine but with specific nodes
-def generate_llm_answer_with_nodes(candidate_id: str, question: str, nodes: List[Any], timeout_s: int = 20) -> str:
-    """
-    Generate an LLM answer using the specific retrieved nodes.
-    
-    Args:
-        candidate_id: The candidate identifier
-        question: The original question
-        nodes: The specific nodes to use as context
-        timeout_s: Timeout in seconds for generation
-        
-    Returns:
-        Generated answer string, or fallback message if generation fails
-    """
-    answer = "[retrieval-only]"
-    
-    try:
-        from llama_index.core.query_engine import RetrieverQueryEngine
-        from llama_index.core.retrievers import BaseRetriever
-        
-        # Create a custom retriever that returns our specific nodes
-        class PreRetrievedRetriever(BaseRetriever):
-            def __init__(self, nodes):
-                self._nodes = nodes
-            
-            def _retrieve(self, query_bundle):
-                return self._nodes
-        
-        retriever = PreRetrievedRetriever(nodes)
-        query_engine = RetrieverQueryEngine(retriever=retriever)
-        
-        with ThreadPoolExecutor(max_workers=1) as ex:
-            fut = ex.submit(query_engine.query, question)
-            resp = fut.result(timeout=timeout_s)
-        answer = str(resp)
-    except FuturesTimeout:
-        log(f"LLM generation timed out after {timeout_s}s; returning retrieval-only.")
-    except Exception as e:
-        log(f"LLM generation failed: {e}")
-    
-    return answer
-
 
 def rag_answer(candidate_id: str, question: str, k: int = 5, gen_timeout_s: int = 20) -> Tuple[str, List[Dict[str, Any]]]:
     """
@@ -274,21 +236,20 @@ def rag_answer(candidate_id: str, question: str, k: int = 5, gen_timeout_s: int 
     ensure_llamaindex_settings()
     # Step 1: Retrieve data from vectors
     nodes = retrieve_vector_data(candidate_id, question, k)
+    log(f"[ret] retrieved {len(nodes)} nodes")
+    sources = [{"text": n.get_text(), "metadata": n.metadata} for n in nodes]
+    log(f"[ret] prepared {len(sources)} sources")
+    # Step 2: Build context-augmented prompt
+    prompt = build_context_prompt(question, sources)
+    log(f"[gen] built prompt with {prompt}")
+    # Step 3: Generate answer with timeout
+    llm = Settings.llm
+    answer = "No answer"
+    answer = llm.complete(prompt)
+    result = answer.text.strip()
+    log(f"[gen] generated answer with {result}")
     
-    # Step 2: Process retrieved nodes into structured sources
-    sources = process_retrieved_nodes(nodes, candidate_id)
-    
-    # Step 3: Generate answer using the retrieved context
-    # Option A: Build context prompt manually
-    #context_prompt = build_context_prompt(question, sources)
-    #log(f"Context-augmented prompt:\n{context_prompt}\n--- End of prompt ---")
-    
-    #answer = generate_llm_answer_with_context(candidate_id, context_prompt, gen_timeout_s)
-    
-    # Option B: Use nodes directly with query engine (uncomment to use instead)
-    answer = generate_llm_answer_with_nodes(candidate_id, question, nodes, gen_timeout_s)
-    
-    return answer, sources
+    return result, sources
 
 
 
