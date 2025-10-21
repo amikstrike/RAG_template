@@ -12,7 +12,9 @@ from llama_index.core.vector_stores import MetadataFilters, ExactMatchFilter
 from llama_index.llms.ollama import Ollama
 from llama_index.embeddings.ollama import OllamaEmbedding
 from llama_index.vector_stores.chroma import ChromaVectorStore
+from llama_index.embeddings.google_genai import GoogleGenAIEmbedding
 from common import *
+
 
 def get_chroma_collection():
     client = chromadb.PersistentClient(path=CHROMA_DIR)
@@ -30,6 +32,17 @@ def get_vector_store_index() -> VectorStoreIndex:
         embed_model=Settings.embed_model,
     )
 
+def ensure_openAI_settings():
+    #os.environ["OPENAI_API_KEY"] =  ""
+
+    Settings.llm = OpenAI(
+        model="gpt-4o-mini",       # fast + cheap (for RAG/chat)
+        temperature=0.2
+    )
+
+    Settings.embed_model = OpenAIEmbedding(
+        model="text-embedding-3-small"   # or "text-embedding-3-small" for cheaper use
+    )
 
 def ensure_ollama_settings():
     #Settings.llm = Ollama(model="llama3.2:latest", request_timeout=200, context_window=8000)
@@ -45,13 +58,14 @@ def ensure_gemini_settings():
         model="models/gemini-2.5-flash",
     )
     Settings.llm = llm
-    Settings.embed_model = Gemini(
-        model="models/gemini-1.5-embed",
+    Settings.embed_model = GoogleGenAIEmbedding(
+        model="models/text-embedding-004",
     )
     Settings.node_parser = SentenceSplitter(chunk_size=300, chunk_overlap=100)
     
 def ensure_llamaindex_settings():
-    ensure_ollama_settings()
+    ensure_openAI_settings()
+    #ensure_gemini_settings()
 
 
 def ensure_llamaindex_agent_settings():

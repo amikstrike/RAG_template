@@ -25,19 +25,19 @@ class KBSearchResult(BaseModel):
 def search_web(query: str) -> WebSearchResult:
     return WebSearchResult(
         query=query,
-        results=[f"Result: 1"]
+        results=[f"Result: 1"] #simulate web search results
     )
 
 
 def search_knowledgebase(query: str) -> KBSearchResult:
     return KBSearchResult(
         query=query,
-        answer=f"Result: 2"
+        answer=f"Result: 13" #any db call
     )
 
 
 async def run_agent(query: str) -> str:
-    ensure_llamaindex_agent_settings()
+    ensure_llamaindex_settings()
     web_tool = FunctionTool.from_defaults(fn=search_web)
     kb_tool  = FunctionTool.from_defaults(fn=search_knowledgebase)
     wf = AgentWorkflow.from_tools_or_functions([web_tool, kb_tool])
@@ -45,7 +45,7 @@ async def run_agent(query: str) -> str:
     return str(result)  
 
 async def run_agent_sync(query: str) -> str:
-    ensure_llamaindex_agent_settings()
+    ensure_llamaindex_settings()
     agent = ReActAgent(tools=[search_web, search_knowledgebase], llm=Settings.llm)
 
     # Create a context to store the conversation history/session state

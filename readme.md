@@ -40,7 +40,8 @@ pip install -r requirements.txt
 
 3. Set up your environment variables:
 ```bash
-export GOOGLE_API_KEY=your_google_api_key_here
+export OPENAI_API_KEY=your_openAI_api_key_here
+export GOOGLE_API_KEY=your_google_api_key_here #change ensure_llamaindex_settings() function to switch provider
 ```
 
 Alternatively, you can create a `.env` file in the project root:
